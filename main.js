@@ -6,6 +6,19 @@
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   window.scrollTo(0, 0);
 
+  // in-page links glide to their section (no jump, no #hash left in the address);
+  // links without a target yet ("#") simply do nothing
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest('a[href^="#"]');
+    if (!a) return;
+    e.preventDefault();
+    const id = a.getAttribute("href").slice(1);
+    const el = id && document.getElementById(id);
+    if (!el) return;
+    const top = el.getBoundingClientRect().top + window.scrollY;
+    window.scrollTo({ top, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  });
+
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -264,8 +277,10 @@ precision highp float;
 uniform sampler2D uSharp;
 uniform sampler2D uRefr;
 uniform sampler2D uDisp;
+uniform sampler2D uBlur;     // plain blurred photo, no glass pattern
 uniform vec2 uRes;
 uniform float uScale;
+uniform vec2 uGlass;         // glass ends at y (device px), fading over this many px
 uniform vec4 uHole; // minX, minY, maxX, maxY (device px, top-left origin)
 float inside(vec2 p) {
   vec2 a = smoothstep(uHole.xy - 0.75, uHole.xy + 0.75, p);
@@ -281,9 +296,13 @@ void main() {
   vec2 d = (vec2(e.x + e.y / 255.0, e.z + e.w / 255.0) - 0.5) * 800.0 * uScale;
   vec3 sharp = texture2D(uSharp, uv).rgb;
   vec3 refr = texture2D(uRefr, fuv).rgb;
+  vec3 plain = mix(texture2D(uBlur, uv).rgb, vec3(1.0), 0.02);
+  // mobile: the glass stops above the title, below it only the blurred photo
+  float glass = 1.0 - smoothstep(uGlass.x - uGlass.y, uGlass.x, px.y);
+  vec3 back = mix(plain, refr, glass);
   // clear where the window is, and where the lens pulls the window in
-  float m = max(inside(px), inside(px + d));
-  gl_FragColor = vec4(mix(refr, sharp, m), 1.0);
+  float m = max(inside(px), inside(px + d * glass));
+  gl_FragColor = vec4(mix(back, sharp, m), 1.0);
 }`;
 
   let gl = null;
@@ -443,9 +462,10 @@ void main() {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    // blur targets no longer needed
-    [G.blurA, G.blurB].forEach((t) => { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); });
-    G.blurA = G.blurB = null;
+    // first blur pass no longer needed; the result (blurB) is kept for the no-glass zone
+    gl.deleteTexture(G.blurA.tex);
+    gl.deleteFramebuffer(G.blurA.fb);
+    G.blurA = null;
     G.ready = true;
     dirty = true;
   }
@@ -490,6 +510,11 @@ void main() {
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, G.disp.tex);
     gl.uniform1i(u.uDisp, 2);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, G.blurB.tex);
+    gl.uniform1i(u.uBlur, 3);
+    if (geo.mobile) gl.uniform2f(u.uGlass, title.offsetTop * dpr, 60 * dpr);
+    else gl.uniform2f(u.uGlass, 1e6, 1);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
@@ -563,23 +588,42 @@ void main() {
    * ------------------------------------------------------------------ */
   let pointer = null;
   window.addEventListener("pointermove", (e) => {
+    if (e.pointerType !== "mouse") return; // touch: dragging doesn't move the window
     pointer = { x: e.clientX, y: e.clientY, type: e.pointerType };
   }, { passive: true });
   document.documentElement.addEventListener("pointerleave", () => { pointer = null; });
 
-  function updateHeroTarget() {
+  // Touch: a tap (not a drag) on the hero sends the window there
+  let tapAnchor = null; // hero px
+  let tapStart = null;
+  hero.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "mouse") tapStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+  }, { passive: true });
+  hero.addEventListener("pointerup", (e) => {
+    if (!tapStart || e.pointerType === "mouse") return;
+    const moved = Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y);
+    if (moved < 10 && performance.now() - tapStart.t < 500) {
+      const r = hero.getBoundingClientRect();
+      tapAnchor = { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+    tapStart = null;
+  }, { passive: true });
+
+  function updateHeroTarget(now) {
     if (!followEnabled) return;
-    if (!pointer || (pointer.type !== "mouse" && !finePointer)) {
-      if (!pointer) { target.x = geo.cx; target.y = geo.cy; }
-      if (pointer && pointer.type !== "mouse") {
-        const r = hero.getBoundingClientRect();
-        target.x = pointer.x - r.left;
-        target.y = pointer.y - r.top;
-      }
-    } else {
+    if (pointer && pointer.type === "mouse") {
       const r = hero.getBoundingClientRect();
       target.x = pointer.x - r.left;
       target.y = pointer.y - r.top;
+    } else if (!finePointer) {
+      // touch: rest on the last tap (or the centre) and drift ever so slightly
+      const a = tapAnchor || { x: geo.cx, y: geo.cy };
+      const t = now / 1000;
+      target.x = a.x + Math.sin(t * 0.35) * 9 * geo.s;
+      target.y = a.y + Math.cos(t * 0.27) * 7 * geo.s;
+    } else {
+      target.x = geo.cx;
+      target.y = geo.cy;
     }
     target.x = clamp(target.x, geo.fw / 2, geo.W - geo.fw / 2);
     target.y = clamp(target.y, geo.fh / 2, geo.H - geo.fh / 2);
@@ -834,7 +878,7 @@ void main() {
       }
     }
 
-    updateHeroTarget();
+    updateHeroTarget(now);
     const k = 1 - Math.exp(-dt * 7);
     const nx = lerp(cur.x, target.x, k);
     const ny = lerp(cur.y, target.y, k);
