@@ -797,7 +797,10 @@ void main() {
     const tabY = cssPx(biz, "var(--tab-y)");
     const tabH = cssPx(biz, "var(--tab-h)");
     bizFrozenBottom = Math.min(tabY + tabH + biz._line, vh);
-    more.style.setProperty("--overlap", `${Math.max(0, vh - bizFrozenBottom - 1)}px`);
+    // the block after the stack starts right under the row's hairline: overlap the
+    // panel by its height below that line (independent of the mobile browser bars)
+    const panelH = biz.querySelector(".folder__panel").offsetHeight;
+    more.style.setProperty("--overlap", `${Math.max(0, panelH - biz._line - 1)}px`);
   }
 
   function updateMentor() {
