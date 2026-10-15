@@ -709,7 +709,13 @@ void main() {
     const dist = r.height - window.innerHeight;
     const p = clamp(-r.top / Math.max(1, dist), 0, 1);
     const W = window.innerWidth;
-    const goal = -p * (slides.length - 1) * W;
+    // stop-frames: each slide holds still at both ends of its stretch of scroll,
+    // the move happens in the middle
+    const n = slides.length - 1;
+    const sp = p * n;
+    const i = Math.min(n - 1, Math.floor(sp));
+    const f = sp - i;
+    const goal = -(i + easeInOut(clamp((f - 0.18) / 0.64, 0, 1))) * W;
     trackX = reduceMotion ? goal : lerp(trackX, goal, 1 - Math.exp(-dt * 10));
     if (Math.abs(goal - trackX) < 0.1) trackX = goal;
     track.style.setProperty("--tx", `${trackX.toFixed(2)}px`);
@@ -722,6 +728,48 @@ void main() {
     const seam = 2 * W + trackX - W / 2; // 0 when the seam is mid-screen
     years.style.setProperty("--yx", `${(seam * 0.8).toFixed(2)}px`);
   }
+
+  // Mobile folders are taller than the screen and pin by their bottom, so their
+  // tabs leave the top. As the next folder slides in, the one beneath sinks a little
+  // until its tab peeks out just above the newcomer's (16 / 58 / 100 design px).
+  function updateFolderStack() {
+    if (!isMobile()) {
+      folders.forEach((f) => { if (f._sink) { f._sink = 0; f.style.transform = ""; } });
+      return;
+    }
+    const vh = window.innerHeight;
+    const step = (42 * window.innerWidth) / 375;
+    for (let i = folders.length - 2; i >= 0; i--) {
+      const f = folders[i];
+      const next = folders[i + 1];
+      const rawTab = f._tab.getBoundingClientRect().top - (f._sink || 0);
+      const nextTab = next._tab.getBoundingClientRect().top;
+      const covered = Math.max(0, vh - nextTab); // how far the next folder has come in
+      const want = Math.min(nextTab - step, f._tabY);
+      const sink = clamp(want - rawTab, 0, covered);
+      if (Math.abs(sink - (f._sink || 0)) > 0.3) {
+        f._sink = sink;
+        f.style.transform = sink ? `translate3d(0, ${sink.toFixed(1)}px, 0)` : "";
+      }
+    }
+  }
+
+  // Clinics magnet: when scrolling stops mid-way, glide to the nearest stop-frame
+  let snapT = 0;
+  window.addEventListener("scroll", () => {
+    clearTimeout(snapT);
+    snapT = setTimeout(() => {
+      const r = clinics.getBoundingClientRect();
+      const dist = r.height - window.innerHeight;
+      if (r.top >= 0 || -r.top >= dist) return; // only while the carousel is pinned
+      const n = slides.length - 1;
+      const k = Math.round((-r.top / dist) * n);
+      const to = window.scrollY + r.top + (k / n) * dist;
+      if (Math.abs(to - window.scrollY) > 2) {
+        window.scrollTo({ top: to, behavior: reduceMotion ? "auto" : "smooth" });
+      }
+    }, 160);
+  }, { passive: true });
 
   // Mentor photo: falls out from under the row's line with a tilt, then the
   // paperclip drops on and the motto writes itself
@@ -752,11 +800,14 @@ void main() {
       [...panel.children].forEach((c) => { h += c.offsetHeight; });
       f.style.setProperty("--content", `${h}px`);
       f._content = h;
+      f._line = h - parseFloat(cs.paddingBottom); // where the last row's hairline sits
+      f._tabY = cssPx(f, "var(--tab-y)");
+      f._tab = f.querySelector(".folder__tab");
     });
     const biz = folders[folders.length - 1];
     const tabY = cssPx(biz, "var(--tab-y)");
     const tabH = cssPx(biz, "var(--tab-h)");
-    bizFrozenBottom = Math.min(tabY + tabH + biz._content, vh);
+    bizFrozenBottom = Math.min(tabY + tabH + biz._line, vh);
     more.style.setProperty("--overlap", `${Math.max(0, vh - bizFrozenBottom - 1)}px`);
   }
 
@@ -907,6 +958,7 @@ void main() {
 
     updateClinics(dt);
     updateMentor();
+    updateFolderStack();
     updateMark();
     updateBlog();
 
