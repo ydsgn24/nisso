@@ -94,7 +94,7 @@
     const lead = Number(el.dataset.lead) || 1;
     const words = splitWords(el);
     words.slice(0, lead).forEach((w) => w.style.setProperty("--a", 1));
-    return { el, words, lead };
+    return { el, words, lead, section: el.closest("section") };
   });
 
   /* ------------------------------------------------------------------
@@ -138,7 +138,6 @@
     }
     hero.style.setProperty("--frame-w", `${geo.fw}px`);
     hero.style.setProperty("--frame-h", `${geo.fh}px`);
-    hero.style.setProperty("--frame-bottom", `${geo.cy + geo.fh / 2}px`);
     hero.style.setProperty("--hero-top", `${Math.min(0, window.innerHeight - geo.H)}px`);
     // fallback <img> crop, mirrors composePhoto()
     const pb = photoBox(heroImg);
@@ -531,11 +530,9 @@ void main() {
     });
 
   let loaded = 0;
+  // the loader waits only for what the first screen needs
   const tasks = [
-    loadImage(isMobile() ? "assets/hero-mobile.jpg" : "assets/hero.jpg").then((i) => { heroImg = i; }),
-    loadImage("assets/emboss.jpg"),
-    loadImage("assets/portrait.jpg"),
-    loadImage("assets/clinic.jpg"),
+    loadImage(isMobile() ? "assets/hero-mobile.webp" : "assets/hero.webp").then((i) => { heroImg = i; }),
     document.fonts ? document.fonts.load('400 100px "Averta Demo PE"').catch(() => {}) : Promise.resolve(),
   ];
   tasks.forEach((t) => t.then(() => { loaded++; }));
@@ -635,24 +632,29 @@ void main() {
   function updateFill() {
     // fills while the hero scrolls up and stays pinned; done right as "About" enters
     const vh = window.innerHeight;
-    const aboutTop = about.getBoundingClientRect().top;
-    const p = clamp(window.scrollY / Math.max(1, window.scrollY + aboutTop - vh), 0, 1);
-    paintWords(fillWords, 2, 0.6, p);
+    if (near.has(hero) || near.has(about)) {
+      const aboutTop = about.getBoundingClientRect().top;
+      const p = clamp(window.scrollY / Math.max(1, window.scrollY + aboutTop - vh), 0, 1);
+      paintWords(fillWords, 2, 0.35, p);
+    }
 
-    const cr = clinicFill.closest("[data-clinics]").getBoundingClientRect();
-    if (cr.top < vh && cr.bottom > 0) paintWords(clinicWords, 0, 0.5, clamp((vh - cr.top) / vh, 0, 1));
+    if (near.has(clinics)) {
+      const cr = clinics.getBoundingClientRect();
+      paintWords(clinicWords, 0, 0.3, clamp((vh - cr.top) / vh, 0, 1));
+    }
 
     // Dark leads: fill while travelling from the bottom to ~upper third
     const start = vh * 0.9;
     const end = vh * 0.3;
-    leads.forEach(({ el, words, lead }) => {
+    leads.forEach(({ el, words, lead, section }) => {
+      if (!near.has(section)) return;
       const r = el.getBoundingClientRect();
       if (r.top > vh || r.bottom < 0) return;
       // data-fill-end: share of the screen height where the fill completes
       const pl = el.dataset.fillEnd
         ? clamp((start - r.top) / (start - vh * Number(el.dataset.fillEnd)), 0, 1)
         : clamp((start - r.top) / (start - end + r.height * 0.5), 0, 1);
-      paintWords(words, lead, 0.5, pl);
+      paintWords(words, lead, 0.25, pl);
     });
   }
 
@@ -904,7 +906,21 @@ void main() {
 
   /* ------------------------------------------------------------------
    * Main loop
+   * Work is limited to sections near the screen, and scroll-driven updates
+   * run only while the page moves (plus a short tail so easing settles).
    * ------------------------------------------------------------------ */
+  const near = new Set();
+  const ioNear = new IntersectionObserver((entries) => {
+    entries.forEach((en) => (en.isIntersecting ? near.add(en.target) : near.delete(en.target)));
+  }, { rootMargin: "50% 0px 50% 0px" });
+  const programs = document.querySelector("#programs");
+  [hero, about, clinics, programs, blog, footer].forEach((el) => ioNear.observe(el));
+
+  let lastScrollY = -1;
+  let activeUntil = 0;
+  const wake = () => { activeUntil = performance.now() + 1500; };
+  window.addEventListener("scroll", wake, { passive: true });
+
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
@@ -937,30 +953,34 @@ void main() {
       dirty = false;
     }
 
-    updateFill();
+    if (near.has(about)) {
+      updateSpotTarget(now);
+      const ks = 1 - Math.exp(-dt * 6);
+      spot.x = lerp(spot.x, spot.tx, ks);
+      spot.y = lerp(spot.y, spot.ty, ks);
+      spot.a = lerp(spot.a, spot.ta, 1 - Math.exp(-dt * 4));
+      lit.style.setProperty("--mx", `${(spot.x * 100).toFixed(2)}%`);
+      lit.style.setProperty("--my", `${(spot.y * 100).toFixed(2)}%`);
+      lit.style.setProperty("--spot", spot.a.toFixed(3));
+    }
 
-    updateSpotTarget(now);
-    const ks = 1 - Math.exp(-dt * 6);
-    spot.x = lerp(spot.x, spot.tx, ks);
-    spot.y = lerp(spot.y, spot.ty, ks);
-    spot.a = lerp(spot.a, spot.ta, 1 - Math.exp(-dt * 4));
-    lit.style.setProperty("--mx", `${(spot.x * 100).toFixed(2)}%`);
-    lit.style.setProperty("--my", `${(spot.y * 100).toFixed(2)}%`);
-    lit.style.setProperty("--spot", spot.a.toFixed(3));
-
-    updateClinics(dt);
-    updateMentor();
-    updateFolderStack();
-    updateMark();
-    updateBlog();
+    if (window.scrollY !== lastScrollY) { lastScrollY = window.scrollY; wake(); }
+    if (now < activeUntil) {
+      updateFill();
+      if (near.has(clinics)) updateClinics(dt);
+      if (near.has(programs)) { updateMentor(); updateFolderStack(); }
+      if (near.has(footer)) updateMark();
+      if (near.has(blog)) updateBlog();
+    }
 
     requestAnimationFrame(frame);
   }
 
   measureHero();
   measureFolders();
-  if (document.fonts) document.fonts.ready.then(measureFolders);
-  window.addEventListener("load", measureFolders);
+  const remeasure = () => { measureFolders(); wake(); };
+  if (document.fonts) document.fonts.ready.then(remeasure);
+  window.addEventListener("load", remeasure);
   requestAnimationFrame(frame);
 
   let resizeT = 0;
@@ -977,9 +997,10 @@ void main() {
       lastW = window.innerWidth;
       measureHero();
       measureFolders();
+      wake();
       if (wasMobile !== geo.mobile) {
         // crossed the breakpoint: swap to the other hero photo
-        loadImage(geo.mobile ? "assets/hero-mobile.jpg" : "assets/hero.jpg").then((i) => {
+        loadImage(geo.mobile ? "assets/hero-mobile.webp" : "assets/hero.webp").then((i) => {
           if (!i) return;
           heroImg = i;
           measureHero();

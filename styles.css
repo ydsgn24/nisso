@@ -1,6 +1,6 @@
 @font-face {
   font-family: "Averta Demo PE";
-  src: url("assets/fonts/Averta_Demo_PE.otf") format("opentype");
+  src: url("assets/fonts/averta.woff2") format("woff2");
   font-weight: 400;
   font-display: swap;
 }
@@ -27,7 +27,7 @@ body {
 }
 body.is-loading { overflow: hidden; }
 img { display: block; max-width: none; }
-p, h1, h2, h3 { margin: 0; font-weight: 400; }
+p, h1, h2, h3, h4 { margin: 0; font-weight: 400; }
 .svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 a { color: inherit; text-decoration: none; }
 
@@ -72,14 +72,14 @@ a { color: inherit; text-decoration: none; }
   height: 100%;
 }
 .hero__canvas { opacity: 0; transition: opacity 1s ease; }
-.hero__fallback { object-fit: cover; object-position: 50% 30%; display: none; }
-/* same crop as the WebGL version (composePhoto), so the face lands in the window */
+/* no-WebGL fallback: same crop as composePhoto(), so the face lands in the window */
 .hero__fallback {
+  display: none;
   inset: auto;
   left: var(--photo-x, 0px);
   top: var(--photo-y, 0px);
   width: var(--photo-w, 100%);
-  height: auto;
+  height: var(--photo-h, auto);
 }
 /* extra shade so the long white text stays readable over the photo */
 .hero__shade {
@@ -107,8 +107,7 @@ a { color: inherit; text-decoration: none; }
   pointer-events: none;
   opacity: 0;
   z-index: 3; /* stays visible over the title, text and button */
-  transform: translate3d(var(--frame-x, 0px), var(--frame-y, 0px), 0);
-  will-change: transform;
+  will-change: transform; /* moved from JS */
 }
 .hero__cross {
   position: absolute;
@@ -172,7 +171,7 @@ a { color: inherit; text-decoration: none; }
   font-size: max(15px, calc(32 * var(--u)));
   line-height: 1;
 }
-.hero__text .w { color: rgba(255, 255, 255, var(--a, 0.6)); }
+.hero__text .w { color: rgba(255, 255, 255, var(--a, 0.35)); }
 
 .btn {
   position: relative;
@@ -182,13 +181,10 @@ a { color: inherit; text-decoration: none; }
   color: #000;
   font-size: 14px;
   font-weight: 500;
-  transition: transform 0.4s var(--ease-out);
 }
 .btn__bg { position: absolute; inset: 0; display: block; overflow: visible; }
-/* on hover the two "bubbles" melt into one solid green pill: the whole shape
-   recolours and a bridge fills the waist between them */
-/* hover: first the bubbles merge, then the pill turns green;
-   leaving: the colour goes back first, then the waist reopens */
+/* hover: first the two "bubbles" merge into one pill (a bridge fills the waist),
+   then it turns green; leaving: the colour goes back first, then the waist reopens */
 .btn__shape,
 .btn__bridge {
   fill: var(--btn-bg, #fff);
@@ -210,12 +206,17 @@ a { color: inherit; text-decoration: none; }
   transition: fill 0.35s var(--ease-out) 0.35s, transform 0.4s var(--ease-out);
 }
 .btn:focus-visible { outline: none; }
-.btn__label { transition: color 0.4s var(--ease-out); }
+.btn__label {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  transition: color 0.4s var(--ease-out);
+}
 .btn:hover .btn__label,
 .btn:focus-visible .btn__label { color: #fff; transition-delay: 0.35s; }
-.btn__label { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); white-space: nowrap; }
-.btn__arrow { position: absolute; left: 240px; top: 18px; transition: transform 0.4s var(--ease-out); }
-.btn__arrow { transition: filter 0.35s var(--ease-out); }
+.btn__arrow { position: absolute; left: 240px; top: 18px; transition: filter 0.35s var(--ease-out); }
 .btn:hover .btn__arrow,
 .btn:focus-visible .btn__arrow { filter: invert(1); transition-delay: 0.35s; }
 .btn--sm { width: 157px; }
@@ -307,7 +308,7 @@ a { color: inherit; text-decoration: none; }
 /* new photo fades in over the previous one, which stays fully opaque */
 .about__portrait img.is-prev { opacity: 1; z-index: 1; }
 .about__portrait img.is-active { opacity: 1; z-index: 2; transition: opacity 0.3s ease; }
-.about__lead .w { color: rgba(0, 0, 0, var(--a, 0.5)); }
+.about__lead .w { color: rgba(0, 0, 0, var(--a, 0.25)); }
 .eyebrow {
   position: absolute;
   left: calc(50 * var(--u));
@@ -331,7 +332,6 @@ a { color: inherit; text-decoration: none; }
   font-size: max(16px, calc(32 * var(--u)));
   line-height: 1;
 }
-.mute { color: rgba(0, 0, 0, 0.5); }
 .about__note {
   position: absolute;
   left: calc(568 * var(--u));
@@ -413,7 +413,7 @@ a { color: inherit; text-decoration: none; }
   max-width: none;
   pointer-events: none;
 }
-.clinic__text .w { color: rgba(255, 255, 255, var(--a, 0.5)); }
+.clinic__text .w { color: rgba(255, 255, 255, var(--a, 0.3)); }
 .clinic__text {
   position: absolute;
   left: calc(50 * var(--u));
@@ -503,7 +503,7 @@ a { color: inherit; text-decoration: none; }
   font-size: max(16px, calc(32 * var(--u)));
   line-height: 1;
 }
-.programs__lead .w { color: rgba(0, 0, 0, var(--a, 0.5)); }
+.programs__lead .w { color: rgba(0, 0, 0, var(--a, 0.25)); }
 .programs__note {
   position: absolute;
   left: calc(568 * var(--u));
@@ -534,9 +534,8 @@ a { color: inherit; text-decoration: none; }
   margin-left: var(--tab-x);
   margin-bottom: -1px; /* no hairline between tab and panel */
   width: calc(310 * var(--u));
-  height: calc(65 * var(--u));
+  height: var(--tab-h);
 }
-.folder--biz .folder__tab { height: calc(66.5065 * var(--u)); }
 .folder__tab img { position: absolute; inset: 0; width: 100%; height: 100%; }
 .folder__name {
   position: absolute;
@@ -589,7 +588,7 @@ a { color: inherit; text-decoration: none; }
   width: calc(417 * var(--u));
   line-height: 1;
 }
-.prog__title { margin: 0; font-size: max(20px, calc(32 * var(--u))); font-weight: 400; }
+.prog__title { font-size: max(20px, calc(32 * var(--u))); }
 .prog__desc { font-size: max(13px, calc(16 * var(--u))); color: rgba(0, 0, 0, 0.5); }
 .folder--biz .prog__desc { color: rgba(255, 255, 255, 0.7); }
 .prog__format {
@@ -705,7 +704,7 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
 }
 .faq__q::-webkit-details-marker { display: none; }
-.faq__q span { flex: 1 1 0; min-width: 0; transition: color 0.3s ease; }
+.faq__q span { flex: 1 1 0; min-width: 0; }
 .faq__q img { flex: none; transition: transform 0.4s var(--ease-out); }
 .faq__q:hover img { transform: translateX(4px); }
 /* open question: the arrow turns 45° to point down into the answer */
@@ -898,8 +897,7 @@ a { color: inherit; text-decoration: none; }
   .folder--kids { --gap: calc(75 * var(--u)); --tab-y: calc(16 * var(--u)); --tab-h: calc(71.4 * var(--u)); --tab-w: calc(234 * var(--u)); --tab-x: calc(13 * var(--u)); --name-y: calc(23 * var(--u)); }
   .folder--adult { --gap: calc(24 * var(--u)); --tab-y: calc(58 * var(--u)); --tab-h: calc(65 * var(--u)); --tab-w: calc(259 * var(--u)); --tab-x: calc(99 * var(--u)); --name-y: calc(20 * var(--u)); }
   .folder--biz { --gap: calc(24 * var(--u)); --tab-y: calc(100 * var(--u)); --tab-h: calc(67 * var(--u)); --tab-w: calc(249 * var(--u)); --tab-x: calc(40 * var(--u)); --name-y: calc(19 * var(--u)); }
-  .folder__tab,
-  .folder--biz .folder__tab { width: var(--tab-w); height: var(--tab-h); }
+  .folder__tab { width: var(--tab-w); }
   .folder__name { top: var(--name-y); font-size: 14px; }
   .folder__panel { padding: calc(17 * var(--u)) calc(16 * var(--u)) calc(32 * var(--u)); }
   .folder--adult .folder__panel { padding-top: calc(64 * var(--u)); }
