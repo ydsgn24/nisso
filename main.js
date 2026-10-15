@@ -715,7 +715,7 @@ void main() {
     const sp = p * n;
     const i = Math.min(n - 1, Math.floor(sp));
     const f = sp - i;
-    const goal = -(i + easeInOut(clamp((f - 0.18) / 0.64, 0, 1))) * W;
+    const goal = -(i + easeInOut(clamp((f - 0.15) / 0.7, 0, 1))) * W;
     trackX = reduceMotion ? goal : lerp(trackX, goal, 1 - Math.exp(-dt * 10));
     if (Math.abs(goal - trackX) < 0.1) trackX = goal;
     track.style.setProperty("--tx", `${trackX.toFixed(2)}px`);
@@ -744,32 +744,21 @@ void main() {
       const next = folders[i + 1];
       const rawTab = f._tab.getBoundingClientRect().top - (f._sink || 0);
       const nextTab = next._tab.getBoundingClientRect().top;
-      const covered = Math.max(0, vh - nextTab); // how far the next folder has come in
+      // the folder first stays put (its last row with the button stays readable)
+      // while the next one crawls over the lower third; then it sinks back behind it
+      // and arrives with its tab showing just as the next folder settles
+      const covered = vh - nextTab; // how far the next folder has come in
+      const coveredMax = vh - next._tabY; // ...when it settles
+      const delay = vh * 0.33;
+      const q = clamp((covered - delay) / Math.max(1, coveredMax - delay), 0, 1);
       const want = Math.min(nextTab - step, f._tabY);
-      const sink = clamp(want - rawTab, 0, covered);
+      const sink = Math.max(0, (want - rawTab) * easeInOut(q));
       if (Math.abs(sink - (f._sink || 0)) > 0.3) {
         f._sink = sink;
         f.style.transform = sink ? `translate3d(0, ${sink.toFixed(1)}px, 0)` : "";
       }
     }
   }
-
-  // Clinics magnet: when scrolling stops mid-way, glide to the nearest stop-frame
-  let snapT = 0;
-  window.addEventListener("scroll", () => {
-    clearTimeout(snapT);
-    snapT = setTimeout(() => {
-      const r = clinics.getBoundingClientRect();
-      const dist = r.height - window.innerHeight;
-      if (r.top >= 0 || -r.top >= dist) return; // only while the carousel is pinned
-      const n = slides.length - 1;
-      const k = Math.round((-r.top / dist) * n);
-      const to = window.scrollY + r.top + (k / n) * dist;
-      if (Math.abs(to - window.scrollY) > 2) {
-        window.scrollTo({ top: to, behavior: reduceMotion ? "auto" : "smooth" });
-      }
-    }, 160);
-  }, { passive: true });
 
   // Mentor photo: falls out from under the row's line with a tilt, then the
   // paperclip drops on and the motto writes itself
