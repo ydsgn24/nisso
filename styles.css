@@ -957,6 +957,10 @@ a { color: inherit; text-decoration: none; }
   .footer__bar { padding: 20px 16px; }
   .footer { font-size: 14px; }
   .footer__title { font-size: 18px; }
+
+  /* small 14px text: 110% leading */
+  .about__note, .programs__note, .prog__desc, .clinic__desc, .help__text,
+  .faq__a p, .footer__col, .footer__bar { line-height: 1.1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
