@@ -48,9 +48,11 @@
       const w = document.createElement("span");
       w.className = "word";
       w.setAttribute("aria-hidden", "true");
-      [...word].forEach((c) => {
+      [...word].forEach((c, ci) => {
         const s = document.createElement("span");
         s.className = "ch";
+        // К and Т touch at this size: open the pair a little
+        if (/к/i.test(c) && /т/i.test(word[ci + 1] || "")) s.classList.add("ch--kern");
         s.style.setProperty("--i", i++);
         s.textContent = c;
         w.appendChild(s);
@@ -629,6 +631,7 @@ void main() {
   /* ------------------------------------------------------------------
    * Scroll-driven bits
    * ------------------------------------------------------------------ */
+  const CLINIC_FIRST_HOLD = 0.35;
   function updateFill() {
     // fills while the hero scrolls up and stays pinned; done right as "About" enters
     const vh = window.innerHeight;
@@ -639,8 +642,11 @@ void main() {
     }
 
     if (near.has(clinics)) {
+      // fills while the first slide is on screen: from the section's top at mid-screen
+      // until the first slide starts to move (CLINIC_FIRST_HOLD of its stretch)
       const cr = clinics.getBoundingClientRect();
-      paintWords(clinicWords, 0, 0.3, clamp((vh - cr.top) / vh, 0, 1));
+      const seg = (cr.height - vh) / 2;
+      paintWords(clinicWords, 0, 0.3, clamp((vh * 0.5 - cr.top) / (vh * 0.5 + seg * CLINIC_FIRST_HOLD), 0, 1));
     }
 
     // Dark leads: fill while travelling from the bottom to ~upper third
@@ -717,7 +723,9 @@ void main() {
     const sp = p * n;
     const i = Math.min(n - 1, Math.floor(sp));
     const f = sp - i;
-    const goal = -(i + easeInOut(clamp((f - 0.15) / 0.7, 0, 1))) * W;
+    // the first slide holds longer: its text fills by scroll before the move
+    const hold = i === 0 ? CLINIC_FIRST_HOLD : 0.15;
+    const goal = -(i + easeInOut(clamp((f - hold) / (0.85 - hold), 0, 1))) * W;
     trackX = reduceMotion ? goal : lerp(trackX, goal, 1 - Math.exp(-dt * 10));
     if (Math.abs(goal - trackX) < 0.1) trackX = goal;
     track.style.setProperty("--tx", `${trackX.toFixed(2)}px`);
@@ -725,41 +733,28 @@ void main() {
       const rel = -trackX / W - i; // -1..1 around the slide
       m.style.setProperty("--px", `${(rel * W * 0.08).toFixed(2)}px`);
     });
-    // seam between clinics 1 and 2 sits at 2W in the track; the years run ahead of
-    // it (foreground parallax): centred on the seam mid-screen, gone at either slide
-    const seam = 2 * W + trackX - W / 2; // 0 when the seam is mid-screen
-    years.style.setProperty("--yx", `${(seam * 0.8).toFixed(2)}px`);
+    // years straddle the seam between clinics 1 and 2: "2022" shows on the first
+    // clinic, "2026" on the second. While the track moves between them they run a
+    // little ahead (foreground parallax) and settle back on the seam at each stop
+    const t = clamp(-trackX / W - 1, 0, 1); // 0 on clinic 1, 1 on clinic 2
+    years.style.setProperty("--yx", `${(-Math.sin(Math.PI * t) * W * 0.12).toFixed(2)}px`);
   }
 
-  // Mobile folders are taller than the screen and pin by their bottom, so their
-  // tabs leave the top. As the next folder slides in, the one beneath sinks a little
-  // until its tab peeks out just above the newcomer's (16 / 58 / 100 design px).
+  // Folders stop as steps, their tabs stacking at the top (the ones behind never
+  // move back). A folder taller than the screen is a window (see .folder.is-window):
+  // once it is in place it holds for a moment, then its programs scroll up inside it
+  // until the last row sits around mid-screen, holds again, and only then does the
+  // next folder come in over it and stop one step lower.
   function updateFolderStack() {
-    if (!isMobile()) {
-      folders.forEach((f) => { if (f._sink) { f._sink = 0; f.style.transform = ""; } });
-      return;
-    }
-    const vh = window.innerHeight;
-    const step = (42 * window.innerWidth) / 375;
-    for (let i = folders.length - 2; i >= 0; i--) {
-      const f = folders[i];
-      const next = folders[i + 1];
-      const rawTab = f._tab.getBoundingClientRect().top - (f._sink || 0);
-      const nextTab = next._tab.getBoundingClientRect().top;
-      // the folder first stays put (its last row with the button stays readable)
-      // while the next one crawls over the lower third; then it sinks back behind it
-      // and arrives with its tab showing just as the next folder settles
-      const covered = vh - nextTab; // how far the next folder has come in
-      const coveredMax = vh - next._tabY; // ...when it settles
-      const delay = vh * 0.33;
-      const q = clamp((covered - delay) / Math.max(1, coveredMax - delay), 0, 1);
-      const want = Math.min(nextTab - step, f._tabY);
-      const sink = Math.max(0, (want - rawTab) * easeInOut(q));
-      if (Math.abs(sink - (f._sink || 0)) > 0.3) {
-        f._sink = sink;
-        f.style.transform = sink ? `translate3d(0, ${sink.toFixed(1)}px, 0)` : "";
-      }
-    }
+    const y = window.scrollY;
+    folders.forEach((f) => {
+      if (!f._travel) return;
+      const d = y - f._stickAt; // scrolled since the folder reached its place
+      const scroll = -clamp(d - f._hold, 0, f._travel);
+      if (Math.abs(scroll - (f._scroll || 0)) < 0.1) return;
+      f._scroll = scroll;
+      f._inner.style.setProperty("--scroll", `${scroll.toFixed(1)}px`);
+    });
   }
 
   // Mentor photo: falls out from under the row's line with a tilt, then the
@@ -771,7 +766,6 @@ void main() {
   // Folders: measure each panel's content (sticky offsets depend on it) and
   // how far the dark block after the stack must overlap the frozen dark panel
   const folders = [...document.querySelectorAll(".folder")];
-  let bizFrozenBottom = 0; // viewport y of the dark panel's content end while frozen
 
   function cssPx(el, expr) {
     const probe = document.createElement("div");
@@ -786,46 +780,99 @@ void main() {
     const vh = window.innerHeight;
     folders.forEach((f) => {
       const panel = f.querySelector(".folder__panel");
+      f._inner = panel.querySelector(".folder__inner");
+      f._tab = f.querySelector(".folder__tab");
       const cs = getComputedStyle(panel);
-      let h = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-      [...panel.children].forEach((c) => { h += c.offsetHeight; });
-      f.style.setProperty("--content", `${h}px`);
-      f._content = h;
+      let h = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + f._inner.offsetHeight;
       f._line = h - parseFloat(cs.paddingBottom); // where the last row's hairline sits
       f._tabY = cssPx(f, "var(--tab-y)");
-      f._tab = f.querySelector(".folder__tab");
+      const tabH = cssPx(f, "var(--tab-h)");
+      const gap = cssPx(f, "var(--gap)");
+      const win = vh - f._tabY - tabH; // panel from the tab down to the bottom of the screen
+      f._topPin = f._tabY - gap;
+      if (!f._tail) {
+        f._tail = document.createElement("div");
+        f._tail.className = "folder__tail";
+        f._tail.setAttribute("aria-hidden", "true");
+        f.after(f._tail);
+      }
+      // the last (dark) folder is no window: it slides up over the others and they
+      // all leave together (see .folder--biz)
+      const isLast = f === folders[folders.length - 1];
+      const overflow = h - win;
+      if (!isLast && overflow > 0) {
+        // the programs travel past the last row so it ends up around mid-screen, with
+        // empty panel below it: the next folder has room to come in before covering it
+        f._hold = vh * 0.25;
+        f._travel = overflow + vh * 0.35;
+        f.classList.add("is-window");
+        f.style.setProperty("--window", `${win}px`);
+        const next = folders[folders.indexOf(f) + 1];
+        const step = next ? cssPx(next, "var(--tab-y)") - f._tabY : 0;
+        f.style.setProperty("--clip", `${Math.max(parseFloat(cs.paddingTop) * 0.6, step + 4)}px`);
+        f.style.setProperty("--pad", `${parseFloat(cs.paddingTop)}px`);
+        f._tail.style.height = `${f._hold * 2 + f._travel}px`;
+      } else {
+        f._tail.style.height = "";
+        f._hold = 0;
+        f._travel = 0;
+        f._scroll = 0;
+        f.classList.remove("is-window");
+        f.style.removeProperty("--window");
+        f.style.removeProperty("--clip");
+        f.style.removeProperty("--pad");
+        f._inner.style.removeProperty("--scroll");
+      }
+      f.style.setProperty("--content", `${h}px`);
+      f._content = h;
     });
+    // the dark folder is pulled up by the ride from the bottom of the screen to its
+    // step; the folder before it gets that much more tail, so the dark one comes in
+    // after it as usual and lands on its step just as the waiting ones are released
     const biz = folders[folders.length - 1];
-    const tabY = cssPx(biz, "var(--tab-y)");
-    const tabH = cssPx(biz, "var(--tab-h)");
-    bizFrozenBottom = Math.min(tabY + tabH + biz._line, vh);
+    const prev = folders[folders.length - 2];
+    const pull = vh - biz._topPin;
+    biz.style.setProperty("--pull", `${pull}px`);
+    biz._tail.style.height = "";
+    prev._tail.style.height = `${(parseFloat(prev._tail.style.height) || 0) + pull}px`;
+    // where each folder reaches its place: its flow position (unstuck) minus its pin
+    folders.forEach((f) => { f.style.position = "relative"; f.style.top = "0px"; });
+    folders.forEach((f) => { f._stickAt = f.getBoundingClientRect().top + window.scrollY - f._topPin; });
+    folders.forEach((f) => { f.style.position = ""; f.style.top = ""; });
+    updateFolderStack();
     // the block after the stack starts right under the row's hairline: overlap the
     // panel by its height below that line (independent of the mobile browser bars)
+    // (a window ends at the bottom of the screen, its line sits where the travel left it)
     const panelH = biz.querySelector(".folder__panel").offsetHeight;
-    more.style.setProperty("--overlap", `${Math.max(0, panelH - biz._line - 1)}px`);
+    const below = biz._travel ? panelH - (biz._line - biz._travel) : panelH - biz._line;
+    more.style.setProperty("--overlap", `${Math.max(0, below - 1)}px`);
   }
 
   function updateMentor() {
     const vh = window.innerHeight;
     const r = more.getBoundingClientRect();
     if (r.top > vh || r.bottom < 0) return;
-    // starts once the block sits right under the line (folders released)
-    const line = bizFrozenBottom + 2;
-    const p = reduceMotion ? 1 : clamp((line - r.top) / (vh * 0.45), 0, 1);
+    // the block starts right under the dark folder's last line; the photo waits
+    // until that line has risen past ~60% of the screen
+    const p = reduceMotion ? 1 : clamp((vh * 0.6 - r.top) / (vh * 0.45), 0, 1);
     const e = easeOut(p);
     // + extra so the tilted corners stay hidden above the line too
     const dist = mentor.offsetTop + mentor.offsetHeight + mentor.offsetWidth * 0.15;
     mentorPhoto.style.visibility = p > 0 ? "visible" : "hidden";
     mentorPhoto.style.setProperty("--fall-y", `${(-(1 - e) * dist).toFixed(1)}px`);
     mentorPhoto.style.setProperty("--fall-r", `${(-(1 - e) * 7).toFixed(2)}deg`);
+    // the clip and the motto come with the landing and leave when the photo goes back up
     if (p >= 0.97) mentor.classList.add("is-landed");
+    else if (p < 0.85) mentor.classList.remove("is-landed");
   }
 
-  // Footer mark: white runs around the ring, then fills the letters row by row
+  // Footer mark: green runs around the ring, then the letters are written stroke by
+  // stroke, like a pen: n (stem, then the arch and its leg), i, s, s, o
   const footer = document.querySelector(".footer");
   const ring = document.querySelector("[data-mark-ring]");
-  const wipes = [...document.querySelectorAll("[data-mark-wipe]")];
-  const ROW_W = [57, 46]; // row widths in mark units (+ a little slack)
+  const strokes = [...document.querySelectorAll("[data-mark-stroke]")];
+  const STROKE_W = [1, 1.6, 1, 2.2, 2.2, 2.6]; // relative lengths: the pen keeps an even pace
+  const STROKE_SUM = STROKE_W.reduce((a, b) => a + b, 0);
 
   function updateMark() {
     const vh = window.innerHeight;
@@ -837,9 +884,12 @@ void main() {
     const p = reduceMotion ? 1 : clamp((start - r.top) / (start - end), 0, 1);
     const ringP = easeInOut(clamp(p / 0.45, 0, 1));
     ring.style.setProperty("--ring", (1 - ringP).toFixed(4));
-    wipes.forEach((w, i) => {
-      const k = clamp((p - 0.45 - i * 0.27) / 0.27, 0, 1);
-      w.setAttribute("width", (ROW_W[i] * k).toFixed(2));
+    let pen = clamp((p - 0.42) / 0.55, 0, 1) * STROKE_SUM; // how far the pen has gone
+    strokes.forEach((st, i) => {
+      const k = clamp(pen / STROKE_W[i], 0, 1);
+      pen -= STROKE_W[i];
+      st.style.strokeDashoffset = (1 - k).toFixed(4);
+      st.style.visibility = k > 0 ? "visible" : "hidden"; // no round-cap dot before the pen arrives
     });
   }
 
@@ -855,6 +905,37 @@ void main() {
     const p = clamp((vh - r.top) / (vh + r.height * 0.5), 0, 1);
     const extra = Math.max(0, blogRow.scrollWidth - blog.clientWidth);
     blogRow.style.setProperty("--bx", `${(-p * extra).toFixed(1)}px`);
+  }
+
+  // Blog reels: muted loops. With a mouse a reel plays while hovered;
+  // on touch screens it plays while on screen
+  {
+    const reels = [...document.querySelectorAll(".blog__item video")];
+    // posters and clips load only once the blog is close
+    const ioLoad = new IntersectionObserver((entries) => {
+      entries.forEach(({ target: v, isIntersecting }) => {
+        if (!isIntersecting) return;
+        v.poster = v.dataset.poster;
+        v.src = v.dataset.src;
+        ioLoad.unobserve(v);
+      });
+    }, { rootMargin: "100% 100% 100% 100%" });
+    reels.forEach((v) => ioLoad.observe(v));
+    const play = (v) => { if (!v.src) { v.poster = v.dataset.poster; v.src = v.dataset.src; } v.preload = "auto"; v.play().catch(() => {}); };
+    if (window.matchMedia("(hover: hover)").matches) {
+      reels.forEach((v) => {
+        const item = v.closest(".blog__item");
+        item.addEventListener("mouseenter", () => play(v));
+        item.addEventListener("mouseleave", () => v.pause());
+        item.addEventListener("focus", () => play(v));
+        item.addEventListener("blur", () => v.pause());
+      });
+    } else if (!reduceMotion) {
+      const ioReels = new IntersectionObserver((entries) => {
+        entries.forEach(({ target: v, isIntersecting }) => (isIntersecting ? play(v) : v.pause()));
+      }, { threshold: 0.6 });
+      reels.forEach((v) => ioReels.observe(v));
+    }
   }
 
   // FAQ: one answer open at a time, height animated in CSS
@@ -979,6 +1060,76 @@ void main() {
   measureHero();
   measureFolders();
   const remeasure = () => { measureFolders(); wake(); };
+
+  // Tariffs open under their program row, one program at a time: opening one
+  // closes the rest. "Обрати тариф" fades away while they are open and
+  // "Згорнути" shows up under the tickets. The folder re-measures while panels
+  // change and the page is led to what changed (see tariffTick)
+  const toggles = [...document.querySelectorAll("[data-tariffs-toggle]")].map((btn) => {
+    const panel = document.getElementById(btn.getAttribute("aria-controls"));
+    return { btn, panel, list: panel.querySelector(".tariffs__list"), close: panel.querySelector("[data-tariffs-close]") };
+  });
+  const tariffSet = (t, open) => {
+    t.btn.setAttribute("aria-expanded", String(open));
+    t.close.setAttribute("aria-expanded", String(open));
+    t.panel.classList.toggle("is-open", open);
+    t.btn.closest(".prog").classList.toggle("is-open", open);
+    t.panel.inert = !open;
+  };
+  // Scroll position that puts el's top at screen y "goal". Folders move with the
+  // scroll in stretches (see updateFolderStack), so this follows the same map:
+  // before its folder reaches its place the folder scrolls with the page, then it
+  // holds, then its content travels up, then it holds on the last row.
+  const scrollFor = (el, goal) => {
+    const f = el.closest(".folder");
+    // within the folder, as if its programs were not scrolled
+    const off = el.getBoundingClientRect().top - f.getBoundingClientRect().top - (f._scroll || 0);
+    const top = goal - off; // where the folder's top must be on screen
+    if (top >= f._topPin) return f._stickAt + f._topPin - top; // still riding up with the page
+    const lift = clamp(f._topPin - top, 0, f._travel || 0);
+    return f._stickAt + (f._travel ? f._hold : 0) + lift;
+  };
+  // after opening: the tickets come into view under the folder's tab;
+  // after closing: the program's title does
+  let tariffAnimUntil = 0;
+  let tariffFocus = null;
+  const tariffTick = () => {
+    remeasure();
+    if (tariffFocus) {
+      const f = tariffFocus.closest(".folder");
+      // just under the tab and the clean strip below it (a window's --clip)
+      const goal = cssPx(f, "calc(var(--tab-y) + var(--tab-h) + var(--clip, 0px))") + 16;
+      const want = scrollFor(tariffFocus, goal);
+      const y = window.scrollY;
+      const next = Math.abs(want - y) < 1 ? want : y + (want - y) * 0.14;
+      window.scrollTo(0, next);
+    }
+    if (performance.now() < tariffAnimUntil) requestAnimationFrame(tariffTick);
+    else tariffFocus = null;
+  };
+  const tariffToggle = (t, open) => {
+    tariffFocus = open ? t.list : t.btn.closest(".prog").querySelector(".prog__title");
+    toggles.forEach((o) => { if (o !== t && o.btn.getAttribute("aria-expanded") === "true") tariffSet(o, false); });
+    tariffSet(t, open);
+    const running = performance.now() < tariffAnimUntil;
+    tariffAnimUntil = performance.now() + 1100;
+    if (!running) requestAnimationFrame(tariffTick);
+  };
+  // keyboard users keep their place: focus hops to the button that takes over
+  toggles.forEach((t) => {
+    tariffSet(t, false);
+    t.btn.addEventListener("click", () => {
+      const kb = t.btn.matches(":focus-visible");
+      tariffToggle(t, true);
+      if (kb) t.close.focus({ preventScroll: true });
+    });
+    t.close.addEventListener("click", () => {
+      const kb = t.close.matches(":focus-visible");
+      tariffToggle(t, false);
+      if (kb) t.btn.focus({ preventScroll: true });
+    });
+  });
+
   if (document.fonts) document.fonts.ready.then(remeasure);
   window.addEventListener("load", remeasure);
   requestAnimationFrame(frame);

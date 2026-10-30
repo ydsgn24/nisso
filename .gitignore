@@ -1,1 +1,5 @@
 .DS_Store
+# source files: the site uses the compressed reels (reel-*.mp4) and portrait-1.webp
+assets/*.MP4
+assets/telegram-cloud-document-*.jpg
+!assets/reel-*.mp4
