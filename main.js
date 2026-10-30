@@ -745,6 +745,10 @@ void main() {
   // once it is in place it holds for a moment, then its programs scroll up inside it
   // until the last row sits around mid-screen, holds again, and only then does the
   // next folder come in over it and stop one step lower.
+  // Where the browser runs scroll-driven animations the motion is all CSS (see
+  // .folder.is-window, ranges set in measureFolders): smooth on phones, where JS
+  // trails the native scroll. Otherwise it is set here on every frame.
+  const cssTravel = window.CSS && CSS.supports("animation-timeline", "scroll()");
   function updateFolderStack() {
     const y = window.scrollY;
     folders.forEach((f) => {
@@ -752,8 +756,10 @@ void main() {
       const d = y - f._stickAt; // scrolled since the folder reached its place
       const scroll = -clamp(d - f._hold, 0, f._travel);
       if (Math.abs(scroll - (f._scroll || 0)) < 0.1) return;
-      f._scroll = scroll;
+      f._scroll = scroll; // kept for scrollFor either way
+      if (cssTravel) return;
       f._inner.style.setProperty("--scroll", `${scroll.toFixed(1)}px`);
+      f._fade.style.opacity = clamp(-scroll / 80, 0, 1).toFixed(3);
     });
   }
 
@@ -781,6 +787,12 @@ void main() {
     folders.forEach((f) => {
       const panel = f.querySelector(".folder__panel");
       f._inner = panel.querySelector(".folder__inner");
+      if (!f._fade) {
+        f._fade = document.createElement("div");
+        f._fade.className = "folder__fade";
+        f._fade.setAttribute("aria-hidden", "true");
+        panel.appendChild(f._fade);
+      }
       f._tab = f.querySelector(".folder__tab");
       const cs = getComputedStyle(panel);
       let h = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + f._inner.offsetHeight;
@@ -806,11 +818,9 @@ void main() {
         f._hold = vh * 0.25;
         f._travel = overflow + vh * 0.35;
         f.classList.add("is-window");
-        f.style.setProperty("--window", `${win}px`);
         const next = folders[folders.indexOf(f) + 1];
         const step = next ? cssPx(next, "var(--tab-y)") - f._tabY : 0;
         f.style.setProperty("--clip", `${Math.max(parseFloat(cs.paddingTop) * 0.6, step + 4)}px`);
-        f.style.setProperty("--pad", `${parseFloat(cs.paddingTop)}px`);
         f._tail.style.height = `${f._hold * 2 + f._travel}px`;
       } else {
         f._tail.style.height = "";
@@ -818,9 +828,7 @@ void main() {
         f._travel = 0;
         f._scroll = 0;
         f.classList.remove("is-window");
-        f.style.removeProperty("--window");
         f.style.removeProperty("--clip");
-        f.style.removeProperty("--pad");
         f._inner.style.removeProperty("--scroll");
       }
       f.style.setProperty("--content", `${h}px`);
@@ -831,7 +839,8 @@ void main() {
     // after it as usual and lands on its step just as the waiting ones are released
     const biz = folders[folders.length - 1];
     const prev = folders[folders.length - 2];
-    const pull = vh - biz._topPin;
+    // (the waiting folders end at the bottom of the large viewport, see .is-window)
+    const pull = cssPx(biz, "100lvh") - biz._topPin;
     biz.style.setProperty("--pull", `${pull}px`);
     biz._tail.style.height = "";
     prev._tail.style.height = `${(parseFloat(prev._tail.style.height) || 0) + pull}px`;
@@ -839,6 +848,13 @@ void main() {
     folders.forEach((f) => { f.style.position = "relative"; f.style.top = "0px"; });
     folders.forEach((f) => { f._stickAt = f.getBoundingClientRect().top + window.scrollY - f._topPin; });
     folders.forEach((f) => { f.style.position = ""; f.style.top = ""; });
+    // the stretch of page scroll over which a window's programs travel (CSS timeline)
+    folders.forEach((f) => {
+      if (!f._travel) return;
+      f.style.setProperty("--travel", `${f._travel}px`);
+      f.style.setProperty("--t-start", `${f._stickAt + f._hold}px`);
+      f.style.setProperty("--t-end", `${f._stickAt + f._hold + f._travel}px`);
+    });
     updateFolderStack();
     // the block after the stack starts right under the row's hairline: overlap the
     // panel by its height below that line (independent of the mobile browser bars)
