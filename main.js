@@ -927,17 +927,24 @@ void main() {
   // on touch screens it plays while on screen
   {
     const reels = [...document.querySelectorAll(".blog__item video")];
-    // posters and clips load only once the blog is close
+    // posters and clips load only once the blog is close. The poster is the card's
+    // background and the video fades in over it once it plays, so nothing blinks
+    // while a clip loads, starts or loops
+    const load = (v) => {
+      if (v.src) return;
+      v.closest(".blog__item").style.backgroundImage = `url("${v.dataset.poster}")`;
+      v.src = v.dataset.src;
+      v.addEventListener("playing", () => v.classList.add("is-ready"), { once: true });
+    };
     const ioLoad = new IntersectionObserver((entries) => {
       entries.forEach(({ target: v, isIntersecting }) => {
         if (!isIntersecting) return;
-        v.poster = v.dataset.poster;
-        v.src = v.dataset.src;
+        load(v);
         ioLoad.unobserve(v);
       });
     }, { rootMargin: "100% 100% 100% 100%" });
     reels.forEach((v) => ioLoad.observe(v));
-    const play = (v) => { if (!v.src) { v.poster = v.dataset.poster; v.src = v.dataset.src; } v.preload = "auto"; v.play().catch(() => {}); };
+    const play = (v) => { load(v); v.preload = "auto"; v.play().catch(() => {}); };
     if (window.matchMedia("(hover: hover)").matches) {
       reels.forEach((v) => {
         const item = v.closest(".blog__item");
